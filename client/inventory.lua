@@ -1,6 +1,3 @@
--- nonick_lib · client/inventory.lua
--- Client half of the stash bridge (see NN.Inventory.openStash).
-
 NN.Inventory = NN.Inventory or {}
 
 function NN.Inventory.openStashLocal(id)

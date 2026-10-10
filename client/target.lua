@@ -1,23 +1,7 @@
--- nonick_lib · client/target.lua
--- Unified third-eye target adapter for ox_target / qb-target / qtarget.
---
--- Options use ONE schema and are translated per system:
---   {
---     name = 'unique_id',            -- optional (auto-generated for ox_target)
---     label = 'Do the thing',
---     icon = 'fa-solid fa-hand',     -- optional
---     canInteract = function() -> bool,   -- optional; distance handled here
---     onSelect = function() end,
---   }
---
---   NN.Target.addLocalEntity(entity, options, distance)
---   NN.Target.removeLocalEntity(entity)
-
 NN.Target = NN.Target or {}
 
 local seq = 0
 
--- Detect (or force) the target system. preferred: 'auto'|'ox_target'|'qb-target'|'qtarget'|'none'
 function NN.Target.system(preferred)
     preferred = tostring(preferred or 'auto'):lower()
     if preferred ~= 'auto' then
@@ -54,8 +38,7 @@ function NN.Target.addLocalEntity(entity, options, distance, preferredSystem)
                 icon = opt.icon,
                 distance = distance,
                 bones = opt.bones,
-                -- ox_target passes (entity, distance, ...); enforce the distance
-                -- here so option callbacks stay system-agnostic.
+
                 canInteract = canInteract and function(_entity, dist)
                     if dist and dist > distance then return false end
                     return canInteract()

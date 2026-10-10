@@ -1,11 +1,3 @@
--- nonick_lib · init.lua
--- Entry point, included by CONSUMER resources via:
---   shared_scripts { '@nonick_lib/init.lua', ... }   (must come FIRST)
--- Loads the side-appropriate modules INTO THE CONSUMER'S Lua state, so
--- everything the modules register (NUI callbacks, DUI surfaces, event
--- handlers) belongs to the consuming resource — exactly like ox_lib's init.
--- Exposes the global `NN` table.
-
 if NN and NN.__loaded then return end
 
 NN = NN or {}

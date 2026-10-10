@@ -1,15 +1,7 @@
--- nonick_lib · server/framework.lua
--- Framework bridge: detection, player identity/job, staff-group permission
--- checks (groups + ACE) and usable-item registration for ESX / QBCore / QBox,
--- with a 'standalone' fallback. Detection is cached on NN.Framework.name/.object.
-
 NN.Framework = NN.Framework or {}
 
 local function trim(v) return NN.Utils.trim(v) end
 
--- ── detection ────────────────────────────────────────────────────────────────
-
--- preferred: 'auto' (default) or an explicit 'esx'|'qbcore'|'qbox'|'standalone'.
 function NN.Framework.detect(preferred)
     local name = 'standalone'
     local object = nil
@@ -26,8 +18,6 @@ function NN.Framework.detect(preferred)
         name = 'qbcore'
     end
 
-    -- Guard the export calls: if the framework resource isn't fully started yet,
-    -- don't let an exception abort detection — degrade gracefully instead.
     if name == 'esx' then
         local ok, obj = pcall(function() return exports['es_extended']:getSharedObject() end)
         object = ok and obj or nil
@@ -41,17 +31,11 @@ function NN.Framework.detect(preferred)
     return name, object
 end
 
--- Cached accessor (detects with 'auto' on first use).
 function NN.Framework.get()
     if not NN.Framework.name then
         NN.Framework.detect(NN.Framework.__preferred or 'auto')
     end
 
-    -- Heal a POISONED early detection: with 'auto', detecting before the
-    -- framework resource finished starting yields 'standalone' — and standalone
-    -- typically auto-grants staff permissions (allowedGroups.standalone), so a
-    -- stale cache silently makes EVERY player an admin. If a framework is up
-    -- NOW, re-detect and drop the stale result.
     if NN.Framework.name == 'standalone' and (NN.Framework.__preferred or 'auto') == 'auto' then
         if GetResourceState('es_extended') == 'started'
             or GetResourceState('qbx_core') == 'started'
@@ -62,8 +46,6 @@ function NN.Framework.get()
 
     return NN.Framework.name, NN.Framework.object
 end
-
--- ── player identity ──────────────────────────────────────────────────────────
 
 function NN.Framework.getPlayer(source)
     local name, object = NN.Framework.get()
@@ -95,7 +77,6 @@ function NN.Framework.getIdentifier(source, player)
         return player.PlayerData.citizenid
     end
 
-    -- A framework character must be loaded before assigning persistent state.
     if name ~= 'standalone' then return nil end
 
     for _, identifier in ipairs(GetPlayerIdentifiers(source)) do
@@ -140,8 +121,6 @@ function NN.Framework.getJob(source, player)
 
     return { name = 'standalone', grade = 999 }
 end
-
--- ── staff groups / permissions ───────────────────────────────────────────────
 
 local function normalizeStaffGroup(value)
     if type(value) ~= 'string' then return nil end
@@ -218,8 +197,6 @@ local function collectEsxStaffGroups(source, player, frameworkObject, allowedGro
             end
         end
     end
-
-    -- Player state bags are client writable. Never use them for permissions.
 
     if frameworkObject then
         if type(frameworkObject.IsPlayerAdmin) == 'function' then
@@ -332,7 +309,6 @@ local function collectStaffGroups(source, allowedGroups, player)
     return {}
 end
 
--- First staff group the player holds (for diagnostics/UI). 'user' when none.
 function NN.Framework.getStaffGroup(source, allowedGroups, player)
     local name = NN.Framework.get()
 
@@ -348,9 +324,6 @@ function NN.Framework.getStaffGroup(source, allowedGroups, player)
     return 'user'
 end
 
--- Permission gate: console (source 0) always passes; then ACE aces (plus any
--- `extraAces`), then framework staff groups vs `allowedGroups` ({ name=true }).
--- tier: 'staff' (default, broader ACE list) or 'admin' (stricter ACE list).
 function NN.Framework.isAllowed(source, allowedGroups, tier, player, extraAces)
     if source == 0 then
         return true
@@ -376,14 +349,9 @@ function NN.Framework.isAllowed(source, allowedGroups, tier, player, extraAces)
         return false
     end
 
-    -- standalone (or unknown): allow when the framework name itself is listed.
     return (allowedGroups or {})[name] == true or (allowedGroups or {}).standalone == true
 end
 
--- ── usable items ─────────────────────────────────────────────────────────────
-
--- Register `itemName` as a USABLE inventory item; callback(source) runs when a
--- player uses it. Returns true when a framework accepted the registration.
 function NN.Framework.registerUsableItem(itemName, callback)
     local name, object = NN.Framework.get()
 

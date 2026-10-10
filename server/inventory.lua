@@ -1,22 +1,9 @@
--- nonick_lib · server/inventory.lua
--- Inventory + money bridge for ox_inventory / qb-inventory / framework-native
--- inventories, with a 'standalone' fallback backed by a plain `playerData`
--- table ({ inventory = {}, money = n }) that the caller owns/persists.
---
--- Common `opts` (all optional):
---   player       framework player object (fetched when omitted)
---   playerData   standalone fallback table ({ inventory = {}, money = n })
---   resource     attribution for qb add/remove (defaults to the consumer)
-
 NN.Inventory = NN.Inventory or {}
 NN.Money = NN.Money or {}
 local function qbInventory(name)
     return name == 'qb-inventory' or name == 'ps-inventory' or name == 'lj-inventory'
 end
 
--- ── detection ────────────────────────────────────────────────────────────────
-
--- preferred: 'auto' (default) or explicit 'ox_inventory'|'qb-inventory'|'framework'|'standalone'.
 function NN.Inventory.detect(preferred, frameworkName)
     preferred = tostring(preferred or 'auto'):lower()
     NN.Inventory.__preferred = preferred
@@ -50,9 +37,6 @@ function NN.Inventory.get()
         NN.Inventory.detect(NN.Inventory.__preferred or 'auto')
     end
 
-    -- Heal a poisoned early detection (same rationale as NN.Framework.get):
-    -- 'standalone' picked with 'auto' before the inventory/framework resources
-    -- finished starting must not stick for the whole session.
     if NN.Inventory.name == 'standalone' and (NN.Inventory.__preferred or 'auto') == 'auto' then
         if GetResourceState('ox_inventory') == 'started'
             or GetResourceState('qb-inventory') == 'started'
@@ -68,11 +52,7 @@ end
 
 local function resolve(source, opts)
     opts = opts or {}
-    -- Prefer the lib's self-healing getters over a cached 'standalone' handed in
-    -- by the consumer: a detection made before the framework/inventory resources
-    -- finished starting must not stick for the whole session (items would keep
-    -- going to the in-memory fallback table). When the consumer explicitly
-    -- configured 'standalone', get() returns 'standalone' anyway (no heal).
+
     local inventoryName = opts.inventory
     if not inventoryName or inventoryName == 'standalone' then
         inventoryName = NN.Inventory.get()
@@ -88,8 +68,6 @@ local function resolve(source, opts)
     return inventoryName, frameworkName, player, opts.playerData or {}, opts.resource or NN.resource
 end
 
--- ── items ────────────────────────────────────────────────────────────────────
-
 function NN.Inventory.addItem(source, itemName, count, metadata, opts)
     local inventoryName, frameworkName, player, playerData, resource = resolve(source, opts)
 
@@ -98,8 +76,7 @@ function NN.Inventory.addItem(source, itemName, count, metadata, opts)
     end
 
     if qbInventory(inventoryName) then
-        -- Guarded: old qb-inventory builds (pre-2024 rewrite) have no AddItem
-        -- export — fall back to the QBCore player functions.
+
         local ok, result = pcall(function()
             return exports[inventoryName]:AddItem(source, itemName, count, false, metadata or {}, resource)
         end)
@@ -150,8 +127,7 @@ function NN.Inventory.getCount(source, itemName, opts)
     end
 
     if qbInventory(inventoryName) then
-        -- Indexing a missing export does NOT fail — only the call does, and old
-        -- qb-inventory builds have no GetItemCount export. pcall + core fallback.
+
         local ok, total = pcall(function()
             return exports[inventoryName]:GetItemCount(source, itemName)
         end)
@@ -172,17 +148,12 @@ end
 function NN.Inventory.removeItem(source, itemName, count, metadata, opts)
     local inventoryName, frameworkName, player, playerData, resource = resolve(source, opts)
 
-    -- metadata DEVE restare nil quando il chiamante non lo specifica: ox filtra
-    -- gli slot per corrispondenza esatta, e un {} matcha solo gli item SENZA
-    -- metadata (le canne rollate e le cime raccolte ne hanno sempre).
     if inventoryName == 'ox_inventory' then
         return exports.ox_inventory:RemoveItem(source, itemName, count, metadata) == true
     end
 
     if qbInventory(inventoryName) then
-        -- qb-inventory's RemoveItem takes (identifier, item, amount, slot, reason):
-        -- no metadata filter, and `reason` must be a string (it may get logged via
-        -- concatenation). Guarded for old builds without the export.
+
         local ok, result = pcall(function()
             return exports[inventoryName]:RemoveItem(source, itemName, count, opts and opts.slot or false, ('%s'):format(resource or NN.resource))
         end)
@@ -229,7 +200,7 @@ function NN.Inventory.canCarry(source, itemName, count, metadata, opts)
             return exports[inventoryName]:CanAddItem(source, itemName, count)
         end)
         if ok then return result end
-        return true -- old build without the export: no reliable check, allow
+        return true
     end
 
     if inventoryName == 'framework' and frameworkName == 'esx' and player and player.canCarryItem then
@@ -238,8 +209,6 @@ function NN.Inventory.canCarry(source, itemName, count, metadata, opts)
 
     return true
 end
-
--- ── stash ────────────────────────────────────────────────────────────────────
 
 local STASH_ADAPTERS = {
     { resource = 'ox_inventory', kind = 'ox' },
@@ -345,8 +314,6 @@ function NN.Inventory.stashItems(id)
     return type(items) == 'table' and out or nil
 end
 
--- Preserve metadata and slot identity while consuming crafting ingredients.
--- On failure the caller restores the returned partial receipt.
 function NN.Inventory.takeItems(source, itemName, count, opts)
     local inventoryName, frameworkName, player = resolve(source, opts)
     local slots
@@ -359,7 +326,7 @@ function NN.Inventory.takeItems(source, itemName, count, opts)
     end
     local receipt, remaining = {}, count
     if slots then
-        -- Snapshot slots: inventory exports may mutate the framework table.
+
         local selected = {}
         for _, slot in pairs(slots) do
             if slot.name == itemName then
@@ -428,9 +395,6 @@ function NN.Inventory.openStash(source, id, label, slots, maxWeight)
     end)
     return ok and result ~= false
 end
-
--- ── money ────────────────────────────────────────────────────────────────────
--- moneyConfig: { esxAccount = 'money', qbType = 'cash', qboxType = 'cash' }
 
 function NN.Money.get(source, moneyConfig, opts)
     local _, frameworkName, player, playerData = resolve(source, opts)

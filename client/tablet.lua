@@ -1,35 +1,3 @@
--- nonick_lib · client/tablet.lua
--- Full in-hand tablet system on top of NN.Dui: prop attached to the hand with a
--- dead-still frozen pose, a fixed scripted camera framing the screen, cursor →
--- DUI forwarding (clamped to the screen), an invisible-NUI keyboard bridge for
--- typing into DUI <input>s, and a state re-push burst that beats the React
--- mount race. Every non-obvious line below exists because the naive version
--- visibly failed (tremor, blur, stolen keybinds, lost first state, ...).
---
---   local tablet = NN.Tablet.new({
---       config = function() return Config.Tablet end,   -- live table, see keys below
---       url = function() return 'nui://...' end,        -- or a plain string
---       getState = function() return currentState end,  -- payload for 'open' pushes
---       shouldPush = function() return isOpen end,      -- gate for the burst
---       onRequestClose = function() closeUi() end,      -- ESC/Backspace handler
---       notify = function(msg) ... end,                 -- optional user feedback
---       runtimeTxd = 'myscript_dui',                    -- optional (default derived)
---   })
---   tablet:ensure()  tablet:open()  tablet:close()  tablet:send(action, payload)
---
--- config() keys (same schema as the weedshop's Config.Tablet):
---   enabled, model, txd, targetTexture, duiFullRes, duiSupersample, duiWidth,
---   duiHeight, bone, pos{x,y,z}, rot{x,y,z}, animPhase, screenRect{x,y,w,h},
---   flipUi, camera{ offset{x,y,z}, point{x,y,z}, fov, blendMs },
---   anim{ baseDict, baseClip, dict, clip, flag }  (optional overrides)
---
--- Web page contract (unchanged from the weedshop page):
---   - page loaded with ?dui=1[&flip=1]; DUI messages arrive as JSON strings
---   - page ACKs the first applied 'open' by fetching <callback openAck>
---   - focusing an input fetches kbStart {value}; live values come back as
---     'kbValue' {value[, done]}; the NUI overlay mirrors keys via kbUpdate/kbEnd
---   - the fullscreen NUI listens for 'kbCapture' {op:'start'|'stop', value}
-
 NN.Tablet = NN.Tablet or {}
 
 local num = NN.Utils.num
@@ -54,13 +22,13 @@ function NN.Tablet.new(opts)
 
     local self = {}
 
-    local surface = nil          -- NN.Dui surface
+    local surface = nil
     local tabletProp = nil
     local tabletCam = nil
     local tabletActive = false
-    local textureRebound = false -- one-shot rebind after the (externally streamed) prop model first loads
-    local tabletAnim = nil       -- frozen hold pose descriptor (pinned once, watched by the input loop)
-    local keyboardActive = false -- invisible NUI keyboard capture is up (pauses the input loop)
+    local textureRebound = false
+    local tabletAnim = nil
+    local keyboardActive = false
     local pushSeq = 0
     local burstAcked = false
     local kbEditing = false
@@ -73,7 +41,7 @@ function NN.Tablet.new(opts)
     local function resolveUrl()
         if type(opts.url) == 'function' then return opts.url() end
         if type(opts.url) == 'string' then return opts.url end
-        -- sensible default: the consumer's ui page in DUI mode
+
         local flip = (c().flipUi ~= false) and '&flip=1' or ''
         return ('nui://%s/web/dist/index.html?dui=1%s'):format(NN.resource, flip)
     end
@@ -94,17 +62,10 @@ function NN.Tablet.new(opts)
         return surface
     end
 
-    -- Push a state/message into the DUI page (mirrors SendNUIMessage).
     function self:send(action, payload)
         if surface then surface:send(action, payload) end
     end
 
-    -- Re-push the live state for a few seconds: the first 'open' can land BEFORE
-    -- the page's message listener attaches (React mounts asynchronously and a
-    -- DUI silently drops messages posted to a not-yet-listening document). The
-    -- page ACKs the first applied 'open' (openAck callback) and the burst stops
-    -- IMMEDIATELY — keeping it running overwrote the user's optimistic UI
-    -- navigation every 200ms, so fast clicking "went back".
     function self:pushStateBurst()
         pushSeq = pushSeq + 1
         local mySeq = pushSeq
@@ -122,9 +83,6 @@ function NN.Tablet.new(opts)
         end)
     end
 
-    -- Create the DUI + runtime texture once and reuse across opens. Registering
-    -- the texture override at pre-warm (before the prop ever streams in) is what
-    -- makes it apply on the very first open.
     function self:ensure()
         if surface then return surface:isReady() end
 
@@ -161,12 +119,6 @@ function NN.Tablet.new(opts)
         local modelName = conf.model or 'prop_cs_tablet'
         local model = joaat(modelName)
 
-        -- Loud diagnostics: if the archetype isn't registered (missing stream /
-        -- wrong name), RequestModel can never succeed and the tablet shows
-        -- NOTHING — which reads as "the DUI doesn't load".
-        -- Player-facing texts are localizable via opts.strings.<key>(modelName);
-        -- the English literals below are only fallbacks (console prints stay
-        -- English on purpose: they are developer diagnostics).
         local strings = opts.strings or {}
 
         if (IsModelInCdimage and not IsModelInCdimage(model)) or (IsModelValid and not IsModelValid(model)) then
@@ -196,21 +148,11 @@ function NN.Tablet.new(opts)
         )
         SetModelAsNoLongerNeeded(model)
 
-        -- One extra Remove+Add of the texture override, ONCE, now that the prop
-        -- model has definitely loaded. Needed when the prop is streamed by
-        -- ANOTHER resource (the pre-warm bind can predate its TXD and never
-        -- land); once only because re-registering per open is an FPS sink.
         if not textureRebound and surface then
             surface:rebindReplace()
             textureRebound = true
         end
 
-        -- Freeze the skeleton in TWO pinned layers:
-        -- 1) a neutral full-body STANDING clip (primary slot) frozen at speed 0
-        --    — replaces the ped's breathing base idle, which keeps swaying the
-        --    spine under a secondary anim (SetPedCanPlayAmbientBaseAnims can't
-        --    stop an idle that's already running);
-        -- 2) the tablet hold as upper-body secondary (flag 49) frozen on top.
         local anim = conf.anim or {}
         local baseDict = anim.baseDict or 'anim@heists@heist_corona@team_idles@male_a'
         local baseClip = anim.baseClip or 'idle'
@@ -234,8 +176,7 @@ function NN.Tablet.new(opts)
         if HasAnimDictLoaded(dict) then
             local phase = num(conf, 'animPhase', 0.0)
             TaskPlayAnim(ped, dict, clip, 4.0, -4.0, -1, flag, 0.0, false, false, false)
-            -- Wait until the clip actually plays, THEN pin the frame — ONCE.
-            -- (Re-pinning every frame pops the skeleton = whole-view tremor.)
+
             local startTo = GetGameTimer() + 500
             while not IsEntityPlayingAnim(ped, dict, clip, 3) and GetGameTimer() < startTo do Wait(0) end
             SetEntityAnimCurrentTime(ped, dict, clip, phase)
@@ -244,12 +185,6 @@ function NN.Tablet.new(opts)
         end
     end
 
-    -- Camera FIXED in the world, framed from the prop's LOCAL offset/point (so
-    -- prop-relative calibration keeps working). It tracks the prop only during a
-    -- short settle window at open (the prop is still easing onto the hand), then
-    -- FREEZES: a fixed-coordinate camera cannot tremble — unlike
-    -- AttachCamToEntity on a bone-attached prop (cam vs bone update at different
-    -- points in the frame = micro-jitter).
     local function updateTabletCam()
         if not (tabletCam and tabletProp and DoesEntityExist(tabletProp)) then return end
         local cam = c().camera or {}
@@ -282,15 +217,11 @@ function NN.Tablet.new(opts)
         end)
     end
 
-    -- Forward the on-screen cursor + clicks to the DUI. screenRect maps the game
-    -- cursor (0..1) onto the tablet screen region, then to DUI pixels.
     local function startInputLoop()
         CreateThread(function()
             while tabletActive do
                 Wait(0)
 
-                -- The hold pose is pinned ONCE at spawn (speed 0). Only RESTART
-                -- it if some other script cleared it — never re-pin per frame.
                 if tabletAnim then
                     local ped = PlayerPedId()
                     if tabletAnim.baseDict and not IsEntityPlayingAnim(ped, tabletAnim.baseDict, tabletAnim.baseClip, 3) then
@@ -305,22 +236,16 @@ function NN.Tablet.new(opts)
                     end
                 end
 
-                -- While the invisible NUI keyboard captures text, hand ALL input
-                -- to it: Enter/Esc must reach the capture input, not the tablet.
                 if not keyboardActive then
                     if SetMouseCursorActiveThisFrame then SetMouseCursorActiveThisFrame() end
 
-                    -- Block EVERY game control + other resources' keybinds while
-                    -- the tablet is open (letters/F-keys/numbers must NOT leak).
-                    -- The mouse is then read via the *disabled* variants.
                     DisableAllControlActions(0)
 
                     local conf = c()
                     local r = conf.screenRect or { x = 0.5, y = 0.5, w = 0.42, h = 0.62 }
-                    local cx = GetDisabledControlNormal(0, 239) -- cursor X
-                    local cy = GetDisabledControlNormal(0, 240) -- cursor Y
+                    local cx = GetDisabledControlNormal(0, 239)
+                    local cy = GetDisabledControlNormal(0, 240)
 
-                    -- CONFINE the cursor to the tablet screen.
                     local minX, maxX = r.x - r.w / 2.0, r.x + r.w / 2.0
                     local minY, maxY = r.y - r.h / 2.0, r.y + r.h / 2.0
                     local clX = math.min(math.max(cx, minX), maxX)
@@ -333,8 +258,6 @@ function NN.Tablet.new(opts)
                     local u = (cx - (r.x - r.w / 2.0)) / r.w
                     local v = (cy - (r.y - r.h / 2.0)) / r.h
 
-                    -- The page is rotated 180° (flipUi): invert the mapping so
-                    -- clicks land where the user actually points.
                     if conf.flipUi ~= false then
                         u = 1.0 - u
                         v = 1.0 - v
@@ -344,17 +267,13 @@ function NN.Tablet.new(opts)
                         surface:mouseMove(u, v)
                         if IsDisabledControlJustPressed(0, 237) then surface:mouseDown('left') end
                         if IsDisabledControlJustReleased(0, 237) then surface:mouseUp('left') end
-                        -- Wheel: ±150px ≈ one comfortable notch (CEF deltas are
-                        -- pixels; ±1 looks like scrolling is broken). Controls
-                        -- 14/15 are what the wheel raises on some setups while
-                        -- everything is disabled.
+
                         local wheelUp = IsDisabledControlJustPressed(0, 241) or IsDisabledControlJustPressed(0, 15)
                         local wheelDown = IsDisabledControlJustPressed(0, 242) or IsDisabledControlJustPressed(0, 14)
                         if wheelUp then surface:wheel(150, 0) end
                         if wheelDown then surface:wheel(-150, 0) end
                     end
 
-                    -- ESC / Backspace close (fallback to the in-UI close button).
                     if IsDisabledControlJustPressed(0, 200) or IsDisabledControlJustPressed(0, 177) then
                         if opts.onRequestClose then opts.onRequestClose() end
                     end
@@ -366,7 +285,6 @@ function NN.Tablet.new(opts)
     function self:open()
         if tabletActive then return true end
 
-        -- The panel lives on the DUI; keep the fullscreen NUI hidden/unfocused.
         SetNuiFocus(false, false)
         SendNUIMessage({ action = 'close' })
 
@@ -378,9 +296,6 @@ function NN.Tablet.new(opts)
             return false
         end
 
-        -- Lock the ped BEFORE sampling the prop for the fixed camera. Also kill
-        -- IK (mouse-driven head/torso "look" propagates down the arms = hand
-        -- tremor) and ambient idles (breath/weight-shift sway).
         if tabletProp and DoesEntityExist(tabletProp) then
             local ped = PlayerPedId()
             FreezeEntityPosition(ped, true)
@@ -395,7 +310,6 @@ function NN.Tablet.new(opts)
 
         startCamera()
 
-        -- Only mark active once setup succeeded, so an error never leaves a stuck flag.
         tabletActive = true
         startInputLoop()
         self:pushStateBurst()
@@ -431,9 +345,6 @@ function NN.Tablet.new(opts)
         SetPedCanPlayGestureAnims(ped, true)
         ClearPedTasks(ped)
 
-        -- DUI, runtime texture AND the override stay alive for the next open:
-        -- removing/re-adding per open occasionally showed the prop's original
-        -- texture on the next open, and the prop is deleted here anyway.
     end
 
     function self:dispose()
@@ -444,13 +355,6 @@ function NN.Tablet.new(opts)
         end
         textureRebound = false
     end
-
-    -- ── invisible-NUI keyboard bridge ────────────────────────────────────────
-    -- A DUI surface can't receive keyboard input. When the user focuses a field
-    -- on the DUI page, the page calls <kbStart>; we focus the (blank) fullscreen
-    -- NUI so CEF grabs the keyboard — which also blocks every other keybind —
-    -- and its invisible input mirrors each keystroke back via <kbUpdate>, which
-    -- we relay into the DUI as 'kbValue'. <kbEnd> (Enter/Esc) releases focus.
 
     stopKeyboard = function(value, submit)
         if not kbEditing then return end
@@ -469,8 +373,6 @@ function NN.Tablet.new(opts)
         kbSession = nil
     end
 
-    -- While typing, NUI owns the mouse. Forward its normalized pointer to the
-    -- same DUI mapping instead of forcing Enter before another field can click.
     registerCallbackOnce(callbacks.pointer or 'tabletPointer', function(data, cb)
         data = data or {}
         if not tabletActive or not surface then cb({ok=false}); return end
@@ -500,8 +402,7 @@ function NN.Tablet.new(opts)
         kbSeq = kbSeq + 1
         kbSession = data.session
         local mySeq = kbSeq
-        -- Focusing the first DUI field may pause its native input loop before
-        -- the initiating mouse-up. Release it before handing pointer ownership over.
+
         if surface then surface:mouseUp('left') end
         SetNuiFocus(true, true)
         SetNuiFocusKeepInput(false)
@@ -509,7 +410,6 @@ function NN.Tablet.new(opts)
             maxLength = math.max(1, math.min(4096,tonumber(data.maxLength) or 64)) } })
         cb({ ok = true })
 
-        -- Watchdog: never leave the player stuck with focus grabbed.
         CreateThread(function()
             local started = GetGameTimer()
             while kbEditing and mySeq == kbSeq and tabletActive and (GetGameTimer() - started) < 30000 do
