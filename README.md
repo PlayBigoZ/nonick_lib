@@ -1,19 +1,19 @@
 # nonick_lib
 
-Shared NoNick library for FiveM scripts: **DUI/tablet** management,
-**framework/inventory** integration (ESX · QBCore · Qbox · standalone),
-**target** adapters (ox_target · qb-target · qtarget), and utilities.
+Libreria condivisa NoNick per script FiveM: gestione **DUI/tablet**, bridge
+**framework/inventory** (ESX · QBCore · QBox · standalone), adapter **target**
+(ox_target · qb-target · qtarget) e utility.
 
-## Installation
+## Installazione
 
-1. Place `nonick_lib` in `resources/` and start it **before** the resources that use it:
+1. Metti `nonick_lib` in `resources/` e avviala **prima** dei consumer:
 
 ```cfg
 ensure nonick_lib
-ensure your_script
+ensure il_tuo_script
 ```
 
-2. In your script's `fxmanifest.lua`, include the initialization file **first**:
+2. Nel `fxmanifest.lua` del tuo script, includi l'init **per primo**:
 
 ```lua
 shared_scripts {
@@ -25,140 +25,125 @@ shared_scripts {
 dependencies { 'nonick_lib' }
 ```
 
-Modules run **inside your script's Lua environment**, similarly to ox_lib:
-NUI callbacks, DUI surfaces, and event handlers belong to your resource.
+I moduli girano **nello stato Lua del tuo script** (stile ox_lib): le NUI
+callback, le superfici DUI e gli event handler appartengono alla tua resource.
 
-## Keymaster / Cfx Portal: keep the library files readable
+## ⚠️ Keymaster: carica la lib SENZA escrow
 
-Resources read the library modules using `LoadResourceFile`, so these files
-**must remain readable**. Encrypting the dynamically loaded Lua files prevents
-the resources that depend on them from loading the library.
-The manifest already excludes these files through `escrow_ignore`; preserve
-those exclusions when packaging or uploading it. Distributing the library
-without escrow also keeps it readable. Your scripts that use the library can
-remain protected by escrow.
+I consumer leggono i moduli con `LoadResourceFile`, che **non può leggere file
+criptati**: se la lib venisse caricata con escrow attivo, ogni resource che la
+usa si romperebbe. Il manifest ha già `escrow_ignore` su tutti i file come rete
+di sicurezza — ma caricala comunque come asset non protetto. (I tuoi script che
+la USANO possono invece restare escrowed normalmente.)
 
-## Version check and updates
+## Version check (aggiornamenti)
 
-On startup, the library checks the published version and prints an update
-notice in the console when appropriate. It only notifies; it does not
-automatically replace the code:
+All'avvio la lib controlla la versione pubblicata e avvisa in console se ne
+esiste una più nuova (solo notifica — mai auto-sostituzione del codice, vietata
+dalle policy Cfx.re):
 
-```text
+```
 [nonick_lib] update available: 1.0.0 -> 1.2.0
 [nonick_lib] download: https://portal.cfx.re/assets/...
 ```
 
-Configure one of these version sources in `server/versioncheck.lua`:
+Keymaster non ha un'API versioni, quindi in `server/versioncheck.lua` configuri
+UNA di queste sorgenti:
+- **JSON ospitato ovunque** (raw GitHub, tuo sito):
+  `{ "version": "1.2.0", "url": "<pagina keymaster>", "notes": "..." }`
+- **GitHub Releases** di un repo pubblico (può contenere solo changelog, zero
+  codice): release taggate `v1.2.0`.
 
-- **A hosted JSON file** (raw GitHub or your own website):
-  `{ "version": "1.2.0", "url": "<asset page>", "notes": "..." }`.
-- **GitHub Releases** from a public repository, using tags such as `v1.2.0`.
-  The repository may contain only a changelog, without publishing your code.
+più `DOWNLOAD_LINK` = la tua pagina keymaster. Flusso di release: bump di
+`version` nel `fxmanifest.lua` → upload su keymaster → aggiorni il JSON (o crei
+la release GitHub). Finché le sorgenti restano vuote il check è disattivato in
+silenzio; gli owner possono zittirlo con `setr nonick_lib_versioncheck 0`.
 
-Set `DOWNLOAD_LINK` to your asset page. The release workflow is: update
-`version` in `fxmanifest.lua` → upload the release → update the JSON file or
-publish the GitHub release. While the source settings are empty, the check
-remains silently disabled. Server owners can disable it with:
-
-```cfg
-setr nonick_lib_versioncheck 0
-```
-
-The helper can be reused in any of your scripts:
+Il helper è riusabile in QUALSIASI tuo script (weedshop incluso):
 
 ```lua
 NN.Version.check({
-    url = 'https://raw.githubusercontent.com/yourname/nn-versions/main/myscript.json',
-    download = 'https://portal.cfx.re/assets/...',  -- optional download link override
+    url = 'https://raw.githubusercontent.com/tuonome/nn-versions/main/mioscript.json',
+    download = 'https://portal.cfx.re/assets/...',  -- opzionale, sovrascrive il link
 })
 ```
 
-If you maintain a separate automatic update workflow, perform `git pull` or
-download the release in your server startup script **before** booting the server.
+Per l'aggiornamento davvero automatico: `git pull` / download release nello
+script di avvio del server, PRIMA del boot.
 
-## API — the `NN` global
+## API — global `NN`
 
 ### `NN.Utils` (shared)
-
 `num(t,k,default)` · `clamp` · `round` · `snap(value,step)` · `trim` ·
 `debugPrinter(prefix, isEnabledFn)` · `loadJson(path[,resource])` ·
 `saveJson(path, data[,resource])`
 
-### `NN.Dui` (client) — generic DUI surfaces
-
+### `NN.Dui` (client) — superfici DUI generiche
 ```lua
 local w, h = NN.Dui.screenPixels(rectW, rectH, supersample --[[2.0]], maxDim --[[4096]])
 local surface = NN.Dui.create({
-    url = 'nui://my_resource/web/dist/index.html?dui=1',
+    url = 'nui://mia_resource/web/dist/index.html?dui=1',
     width = w, height = h,
-    runtimeTxd = 'myscript_dui',                       -- optional
-    replace = { txd = 'my_prop', texture = 'screen' }, -- replace the prop texture
+    runtimeTxd = 'mioscript_dui',                       -- opzionale
+    replace = { txd = 'mio_prop', texture = 'screen' }, -- override texture prop
 })
-surface:send('open', state)      -- JSON message sent to the page
-surface:mouseMove(u, v)          -- normalized 0..1; also mouseDown/mouseUp/wheel(±150)
-surface:rebindReplace()          -- once, after an external prop has loaded
+surface:send('open', state)      -- messaggio JSON alla pagina
+surface:mouseMove(u, v)          -- 0..1 · mouseDown/mouseUp/wheel(±150)
+surface:rebindReplace()          -- una volta, dopo il load di un prop esterno
 surface:destroy()
 ```
-`SendDuiMessage` reaches the page as a **JSON string**; parse it with
-`JSON.parse`. A 2× supersampling factor improves text clarity on a 3D prop.
-Avoid calling `setUrl` at runtime, as it invalidates the texture binding.
+Nota: `SendDuiMessage` arriva alla pagina come **stringa JSON** (fare
+`JSON.parse`). Il supersample ×2 esatto è ciò che rende nitido il testo su un
+prop 3D. Evita `setUrl` a runtime: invalida il binding della texture.
 
-### `NN.Tablet` (client) — complete handheld tablet
-
-A frozen prop, fixed camera, clamped cursor-to-DUI mapping, mouse wheel support,
-keyboard input through an invisible NUI bridge, and acknowledged state delivery
-to handle initialization races.
-
+### `NN.Tablet` (client) — tablet in mano completo
+Prop congelato senza tremolii, camera fissa, cursore→DUI con clamp, rotella,
+ponte tastiera via NUI invisibile, burst di stato anti-race con ACK.
 ```lua
 local tablet = NN.Tablet.new({
-    config = function() return Config.Tablet end, -- same configuration schema as Weedshop
+    config = function() return Config.Tablet end, -- stesso schema del weedshop
     getState = function() return currentState end,
     shouldPush = function() return isOpen end,
     onRequestClose = function() closeUi() end,
     notify = function(msg) ... end,
 })
-tablet:ensure()   -- pre-warm; recommended about 500 ms after resource startup
+tablet:ensure()   -- pre-warm (consigliato ~500ms dopo lo start)
 tablet:open()  tablet:close()  tablet:send(action, payload)  tablet:isActive()
 ```
-Web page contract: `?dui=1[&flip=1]`, the `tabletOpenAck` acknowledgement,
-the `tabletKbStart/Update/End` keyboard callbacks, and `kbCapture`/`kbValue`
-messages. Refer to the Weedshop web implementation for the matching page logic.
+Contratto pagina web: `?dui=1[&flip=1]`, ack `tabletOpenAck`, tastiera
+`tabletKbStart/Update/End` + messaggi `kbCapture`/`kbValue` (vedi la pagina del
+weedshop come riferimento).
 
 ### `NN.Target` (client)
-
 ```lua
 NN.Target.addLocalEntity(entity, {
-    { label = 'Action', icon = 'fa-solid fa-hand',
+    { label = 'Azione', icon = 'fa-solid fa-hand',
       canInteract = function() return true end,
       onSelect = function() ... end },
-}, distance)
+}, distanza)
 NN.Target.removeLocalEntity(entity)
 ```
 
 ### `NN.Notify` (client)
-
 `NN.Notify.feed(message, prefix)` · `NN.Notify.help(message)`
 
 ### `NN.Framework` (server)
-
 ```lua
 NN.Framework.detect(Config.Framework)     -- 'auto'|'esx'|'qbcore'|'qbox'|'standalone'
 NN.Framework.getPlayer(src)   .getIdentifier(src)   .getPlayerName(src)   .getJob(src)
 NN.Framework.isAllowed(src, allowedGroups, 'staff'|'admin', player?, extraAces?)
 NN.Framework.getStaffGroup(src, allowedGroups)
-NN.Framework.registerUsableItem('my_item', function(src) ... end)
+NN.Framework.registerUsableItem('mio_item', function(src) ... end)
 ```
 
 ### `NN.Inventory` / `NN.Money` (server)
-
 ```lua
 NN.Inventory.detect(Config.Inventory, frameworkName)
 NN.Inventory.addItem(src, item, count, metadata, opts)
-NN.Inventory.removeItem(src, item, count, metadata, opts)   -- returns a boolean
+NN.Inventory.removeItem(src, item, count, metadata, opts)   -- -> bool
 NN.Inventory.getCount(src, item, opts)
 NN.Inventory.canCarry(src, item, count, metadata, opts)
 NN.Money.get(src, moneyConfig, opts)
 NN.Money.remove(src, moneyConfig, amount, reason, opts)
--- opts: { player=?, playerData=? (standalone fallback), resource=? }
+-- opts: { player=?, playerData=? (fallback standalone), resource=? }
 ```
